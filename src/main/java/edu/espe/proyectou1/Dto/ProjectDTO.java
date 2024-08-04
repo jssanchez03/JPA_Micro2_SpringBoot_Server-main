@@ -17,4 +17,5 @@ public class ProjectDTO {
     private String state;
     private String idLeader;
     private List<UUID> taskIds;
+    private UUID companyId;
 }

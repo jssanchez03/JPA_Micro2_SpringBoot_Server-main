@@ -1,15 +1,18 @@
 package edu.espe.proyectou1.Service;
 
 import edu.espe.proyectou1.Dto.ProjectDTO;
+import edu.espe.proyectou1.Model.Company;
 import edu.espe.proyectou1.Model.Project;
 import edu.espe.proyectou1.Model.Task;
 import edu.espe.proyectou1.Payload.response.ProjectWithLeader;
+import edu.espe.proyectou1.Repository.CompanyRepository;
 import edu.espe.proyectou1.Repository.ProjectRepository;
 import edu.espe.proyectou1.Repository.TaskRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Collections;
@@ -35,6 +38,9 @@ public class ProjectService {
                 .collect(Collectors.toList());
     }
 
+    @Autowired
+    private CompanyRepository companyRepository;
+
     public ResponseEntity<?> save(ProjectDTO projectDTO) {
         // Verificar que el usuario existe
         String url = "http://localhost:8081/user/findById/" + projectDTO.getIdLeader();
@@ -42,6 +48,17 @@ public class ProjectService {
 
         if (response.getStatusCode().is2xxSuccessful()) {
             Project project = convertToEntity(projectDTO);
+
+            // Verificar y asignar la empresa si se proporciona un companyId
+            if (projectDTO.getCompanyId() != null) {
+                Optional<Company> companyOptional = companyRepository.findById(projectDTO.getCompanyId());
+                if (companyOptional.isPresent()) {
+                    project.setCompany(companyOptional.get());
+                } else {
+                    return new ResponseEntity<>("Company not found", HttpStatus.NOT_FOUND);
+                }
+            }
+
             Project savedProject = projectRepository.save(project);
             return new ResponseEntity<>(convertToDTO(savedProject), HttpStatus.CREATED);
         } else {
@@ -63,19 +80,30 @@ public class ProjectService {
         if (projectOptional.isPresent()) {
             ProjectDTO projectDTO = convertToDTO(projectOptional.get());
             String leaderId = projectDTO.getIdLeader();
-            String url = "http://localhost:8081/user/findById/" + leaderId;
-            ResponseEntity<?> response = restTemplate.getForEntity(url, Object.class);
 
-            if (response.getStatusCode().is2xxSuccessful()) {
-                Object userLeader = response.getBody();
-                ProjectWithLeader projectResponse = new ProjectWithLeader();
-                projectResponse.setProject(projectDTO);
-                projectResponse.setUserLeader(userLeader);
+            ProjectWithLeader projectResponse = new ProjectWithLeader();
+            projectResponse.setProject(projectDTO);
 
-                return new ResponseEntity<>(projectResponse, HttpStatus.OK);
-            } else {
-                return new ResponseEntity<>("Leader user not found", HttpStatus.NOT_FOUND);
+            try {
+                String url = "http://localhost:8081/user/findById/" + leaderId;
+                ResponseEntity<?> response = restTemplate.getForEntity(url, Object.class);
+
+                if (response.getStatusCode().is2xxSuccessful()) {
+                    Object userLeader = response.getBody();
+                    projectResponse.setUserLeader(userLeader);
+                } else {
+                    // Si no se encuentra el usuario, simplemente dejamos el userLeader como null
+                    projectResponse.setUserLeader(null);
+                }
+            } catch (HttpClientErrorException.NotFound e) {
+                // Si no se encuentra el usuario, simplemente dejamos el userLeader como null
+                projectResponse.setUserLeader(null);
+            } catch (Exception e) {
+                // Loguear el error pero no fallar la respuesta
+                System.err.println("Error al obtener el líder del proyecto: " + e.getMessage());
             }
+
+            return new ResponseEntity<>(projectResponse, HttpStatus.OK);
         } else {
             return new ResponseEntity<>("Project not found", HttpStatus.NOT_FOUND);
         }
@@ -124,13 +152,13 @@ public class ProjectService {
         dto.setProgress(project.getProgress());
         dto.setState(project.getState());
         dto.setIdLeader(project.getIdLeader());
-
         // Manejo seguro de la lista de tareas
         dto.setTaskIds(project.getTasks() != null
                 ? project.getTasks().stream()
                 .map(Task::getId)
                 .collect(Collectors.toList())
                 : Collections.emptyList());
+        dto.setCompanyId(project.getCompany() != null ? project.getCompany().getId() : null);
 
         return dto;
     }
@@ -146,6 +174,11 @@ public class ProjectService {
         project.setState(dto.getState());
         project.setIdLeader(dto.getIdLeader());
         // No establecemos las tareas aquí, ya que se manejan por separado
+        if (dto.getCompanyId() != null) {
+            Company company = new Company();
+            company.setId(dto.getCompanyId());
+            project.setCompany(company);
+        }
         return project;
     }
 }
